@@ -4,6 +4,7 @@ import { FileUpload } from './components/FileUpload'
 import { AnalysisResult } from './components/AnalysisResult'
 import { AnalysisHistory } from './components/AnalysisHistory'
 import { LoadingSpinner } from './components/LoadingSpinner'
+import { Footer } from './components/Footer'
 import { analyzeContent } from './utils/analyzer'
 import type { AnalysisResult as AnalysisResultType, HistoryItem } from './types'
 
@@ -52,10 +53,10 @@ function App() {
 
   return (
     <div className={`min-h-screen transition-colors duration-300 ${isDarkMode ? 'dark' : ''}`}>
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 flex flex-col">
         <Header isDarkMode={isDarkMode} onToggleDarkMode={toggleDarkMode} />
         
-        <main className="container mx-auto px-4 py-8">
+        <main className="container mx-auto px-4 py-8 flex-grow">
           <div className="max-w-4xl mx-auto space-y-8">
             {/* Hero Section */}
             <div className="text-center space-y-4">
@@ -99,6 +100,8 @@ function App() {
             )}
           </div>
         </main>
+
+        <Footer />
       </div>
     </div>
   )
