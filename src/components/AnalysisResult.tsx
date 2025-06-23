@@ -1,12 +1,27 @@
-import React from 'react'
-import { AlertTriangle, CheckCircle, XCircle, Info, Shield, Eye, FileText, Zap } from 'lucide-react'
+import React, { useState, useEffect } from 'react'
+import { AlertTriangle, CheckCircle, XCircle, Info, Shield, Eye, FileText, Zap, Play, Pause } from 'lucide-react'
 import type { AnalysisResult } from '../types'
 
 interface AnalysisResultProps {
   result: AnalysisResult
+  file: File
 }
 
-export function AnalysisResult({ result }: AnalysisResultProps) {
+export function AnalysisResult({ result, file }: AnalysisResultProps) {
+  const [fileUrl, setFileUrl] = useState<string>('')
+  const [isVideoPlaying, setIsVideoPlaying] = useState(false)
+
+  useEffect(() => {
+    // Create object URL for file preview
+    const url = URL.createObjectURL(file)
+    setFileUrl(url)
+
+    // Cleanup function to revoke object URL
+    return () => {
+      URL.revokeObjectURL(url)
+    }
+  }, [file])
+
   const getStatusIcon = () => {
     if (result.aiProbability >= 75) return <XCircle className="w-8 h-8 text-red-500" />
     if (result.aiProbability >= 50) return <AlertTriangle className="w-8 h-8 text-yellow-500" />
@@ -49,10 +64,87 @@ export function AnalysisResult({ result }: AnalysisResultProps) {
     return { level: 'Minimal Risk', color: 'bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-200' }
   }
 
+  const formatFileSize = (bytes: number) => {
+    if (bytes === 0) return '0 Bytes'
+    const k = 1024
+    const sizes = ['Bytes', 'KB', 'MB', 'GB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+  }
+
   const risk = getRiskLevel()
+  const isImage = file.type.startsWith('image/')
+  const isVideo = file.type.startsWith('video/')
 
   return (
     <div className="space-y-8">
+      {/* File Preview Section */}
+      <div className="bg-gray-50 dark:bg-gray-700 rounded-xl p-6">
+        <h3 className="text-lg font-semibold mb-4 flex items-center">
+          <Eye className="w-5 h-5 mr-2 text-blue-500" />
+          Uploaded File Preview
+        </h3>
+        
+        <div className="grid lg:grid-cols-2 gap-6 items-start">
+          {/* File Preview */}
+          <div className="space-y-4">
+            <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border-2 border-dashed border-gray-300 dark:border-gray-600">
+              {isImage && (
+                <img
+                  src={fileUrl}
+                  alt="Uploaded content"
+                  className="w-full h-auto max-h-80 object-contain rounded-lg"
+                />
+              )}
+              
+              {isVideo && (
+                <div className="relative">
+                  <video
+                    src={fileUrl}
+                    className="w-full h-auto max-h-80 object-contain rounded-lg"
+                    controls
+                    onPlay={() => setIsVideoPlaying(true)}
+                    onPause={() => setIsVideoPlaying(false)}
+                  />
+                  {!isVideoPlaying && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 rounded-lg">
+                      <Play className="w-12 h-12 text-white opacity-80" />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* File Information */}
+          <div className="space-y-4">
+            <div className="bg-white dark:bg-gray-800 rounded-lg p-4">
+              <h4 className="font-semibold mb-3 text-gray-900 dark:text-gray-100">File Information</h4>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-600 dark:text-gray-400">Name:</span>
+                  <span className="font-medium truncate ml-2 max-w-48" title={file.name}>{file.name}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600 dark:text-gray-400">Type:</span>
+                  <span className="font-medium">{file.type || 'Unknown'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600 dark:text-gray-400">Size:</span>
+                  <span className="font-medium">{formatFileSize(file.size)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600 dark:text-gray-400">Last Modified:</span>
+                  <span className="font-medium">
+                    {new Date(file.lastModified).toLocaleDateString()}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Main Result */}
       <div className="text-center space-y-6">
         <div className="flex items-center justify-center space-x-4 mb-6">
