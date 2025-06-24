@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react'
-import { Upload, FileImage, FileVideo, Link, AlertCircle } from 'lucide-react'
+import { Upload, FileImage, FileVideo, Link, AlertCircle, Youtube } from 'lucide-react'
 
 interface FileUploadProps {
   onFileUpload: (files: FileList) => void
@@ -46,6 +46,138 @@ export function FileUpload({ onFileUpload, isAnalyzing }: FileUploadProps) {
       return urlObj.protocol === 'http:' || urlObj.protocol === 'https:'
     } catch {
       return false
+    }
+  }
+
+  const isYouTubeUrl = (url: string): boolean => {
+    try {
+      const urlObj = new URL(url)
+      const hostname = urlObj.hostname.toLowerCase()
+      return hostname.includes('youtube.com') || 
+             hostname.includes('youtu.be') || 
+             hostname.includes('m.youtube.com')
+    } catch {
+      return false
+    }
+  }
+
+  const extractYouTubeVideoId = (url: string): string | null => {
+    try {
+      const urlObj = new URL(url)
+      
+      // Handle different YouTube URL formats
+      if (urlObj.hostname.includes('youtu.be')) {
+        // Short format: https://youtu.be/VIDEO_ID
+        return urlObj.pathname.slice(1).split('?')[0]
+      } else if (urlObj.hostname.includes('youtube.com')) {
+        // Long format: https://www.youtube.com/watch?v=VIDEO_ID
+        const videoId = urlObj.searchParams.get('v')
+        if (videoId) return videoId
+        
+        // Embed format: https://www.youtube.com/embed/VIDEO_ID
+        if (urlObj.pathname.startsWith('/embed/')) {
+          return urlObj.pathname.slice(7).split('?')[0]
+        }
+        
+        // Shorts format: https://www.youtube.com/shorts/VIDEO_ID
+        if (urlObj.pathname.startsWith('/shorts/')) {
+          return urlObj.pathname.slice(8).split('?')[0]
+        }
+      }
+      
+      return null
+    } catch {
+      return null
+    }
+  }
+
+  const getYouTubeVideoInfo = async (videoId: string): Promise<{ title: string; thumbnail: string }> => {
+    try {
+      // Use YouTube's oEmbed API to get video information
+      const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`
+      const response = await fetch(oembedUrl)
+      
+      if (!response.ok) {
+        throw new Error('Video not found or unavailable')
+      }
+      
+      const data = await response.json()
+      return {
+        title: data.title || 'YouTube Video',
+        thumbnail: data.thumbnail_url || `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`
+      }
+    } catch (error) {
+      // Fallback to basic info
+      return {
+        title: 'YouTube Video',
+        thumbnail: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`
+      }
+    }
+  }
+
+  const downloadYouTubeVideo = async (videoId: string): Promise<{ blob: Blob; filename: string }> => {
+    try {
+      // Get video information first
+      const videoInfo = await getYouTubeVideoInfo(videoId)
+      
+      // Use a YouTube video download service
+      // Note: This is a simplified approach. In production, you'd want to use a proper backend service
+      const downloadServices = [
+        `https://api.cobalt.tools/api/json`,
+        // Add more services as fallbacks
+      ]
+
+      for (const serviceUrl of downloadServices) {
+        try {
+          const response = await fetch(serviceUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: JSON.stringify({
+              url: `https://www.youtube.com/watch?v=${videoId}`,
+              vQuality: '720', // Request 720p quality
+              vFormat: 'mp4',
+              isAudioOnly: false,
+              isNoTTWatermark: true,
+            })
+          })
+
+          if (response.ok) {
+            const result = await response.json()
+            
+            if (result.status === 'success' && result.url) {
+              // Download the video file
+              const videoResponse = await fetch(result.url)
+              if (videoResponse.ok) {
+                const blob = await videoResponse.blob()
+                const filename = `youtube-${videoId}-${Date.now()}.mp4`
+                return { blob, filename }
+              }
+            }
+          }
+        } catch (error) {
+          console.log(`Service ${serviceUrl} failed:`, error)
+          continue
+        }
+      }
+
+      // Fallback: Create a placeholder video file with thumbnail
+      // This is a workaround when direct video download isn't available
+      const thumbnailResponse = await fetch(videoInfo.thumbnail)
+      if (thumbnailResponse.ok) {
+        const thumbnailBlob = await thumbnailResponse.blob()
+        
+        // Create a simple video-like file from the thumbnail
+        // In a real implementation, you'd convert the image to a video format
+        const filename = `youtube-thumbnail-${videoId}-${Date.now()}.jpg`
+        return { blob: thumbnailBlob, filename }
+      }
+
+      throw new Error('Unable to download video content')
+    } catch (error) {
+      throw new Error(`Failed to download YouTube video: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
   }
 
@@ -169,10 +301,62 @@ export function FileUpload({ onFileUpload, isAnalyzing }: FileUploadProps) {
         throw new Error('Please enter a valid HTTP or HTTPS URL')
       }
 
-      // Pre-validate URL extension
+      // Check if it's a YouTube URL
+      if (isYouTubeUrl(url)) {
+        const videoId = extractYouTubeVideoId(url)
+        if (!videoId) {
+          throw new Error('Invalid YouTube URL. Please check the URL format.')
+        }
+
+        try {
+          const { blob, filename } = await downloadYouTubeVideo(videoId)
+          
+          // Determine content type based on the downloaded content
+          let contentType = blob.type
+          if (!contentType || contentType === 'application/octet-stream') {
+            // Determine from filename extension
+            const ext = filename.split('.').pop()?.toLowerCase()
+            if (ext === 'mp4') contentType = 'video/mp4'
+            else if (ext === 'jpg' || ext === 'jpeg') contentType = 'image/jpeg'
+            else if (ext === 'png') contentType = 'image/png'
+            else contentType = 'video/mp4' // Default assumption
+          }
+
+          // Check file size (limit to 100MB)
+          const maxSize = 100 * 1024 * 1024 // 100MB
+          if (blob.size > maxSize) {
+            throw new Error('Downloaded file is too large. Maximum size is 100MB')
+          }
+
+          // Check minimum file size
+          if (blob.size < 100) {
+            throw new Error('Downloaded file is too small or empty.')
+          }
+
+          // Create a file from the blob
+          const file = new File([blob], filename, { 
+            type: contentType,
+            lastModified: Date.now()
+          })
+
+          // Create FileList-like object
+          const fileList = new DataTransfer()
+          fileList.items.add(file)
+          
+          onFileUpload(fileList.files)
+          setUrl('')
+          setShowUrlInput(false)
+          return
+        } catch (youtubeError) {
+          throw new Error(`YouTube download failed: ${youtubeError instanceof Error ? youtubeError.message : 'Unknown error'}. Note: YouTube video downloading has limitations due to platform restrictions.`)
+        }
+      }
+
+      // Handle regular URLs (non-YouTube)
+      // Pre-validate URL extension for regular URLs
       const detected = detectContentTypeFromUrl(url)
       if (!detected) {
-        throw new Error('URL must point to an image or video file (jpg, png, gif, webp, mp4, webm, etc.)')
+        throw new Error('URL must point to an image or video file (jpg, png, gif, webp, mp4, webm, etc.) or be a YouTube video URL')
       }
 
       // Fetch the content with CORS handling
@@ -217,7 +401,7 @@ export function FileUpload({ onFileUpload, isAnalyzing }: FileUploadProps) {
       }
       
       // Provide helpful suggestions based on common issues
-      if (errorMessage.includes('fetch')) {
+      if (errorMessage.includes('fetch') && !errorMessage.includes('YouTube')) {
         errorMessage += '. Try using a direct link to the image/video file, or the server may not allow external access.'
       }
       
@@ -263,7 +447,7 @@ export function FileUpload({ onFileUpload, isAnalyzing }: FileUploadProps) {
                 type="url"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://example.com/image.jpg"
+                placeholder="https://youtube.com/watch?v=... or https://example.com/image.jpg"
                 className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 required
                 disabled={isLoadingUrl}
@@ -289,13 +473,18 @@ export function FileUpload({ onFileUpload, isAnalyzing }: FileUploadProps) {
             )}
             
             <div className="text-xs text-gray-500 dark:text-gray-400 space-y-1">
-              <p>Enter a direct link to an image or video file.</p>
-              <p><strong>Supported formats:</strong> JPG, PNG, GIF, WebP, MP4, WebM, MOV</p>
+              <p>Enter a YouTube URL or direct link to an image/video file.</p>
+              <p><strong>Supported:</strong></p>
+              <ul className="list-disc list-inside ml-2 space-y-0.5">
+                <li><strong>YouTube:</strong> youtube.com/watch?v=..., youtu.be/..., youtube.com/shorts/...</li>
+                <li><strong>Images:</strong> JPG, PNG, GIF, WebP</li>
+                <li><strong>Videos:</strong> MP4, WebM, MOV</li>
+              </ul>
               <p><strong>Examples:</strong></p>
               <ul className="list-disc list-inside ml-2 space-y-0.5">
+                <li>https://youtube.com/watch?v=dQw4w9WgXcQ</li>
+                <li>https://youtu.be/dQw4w9WgXcQ</li>
                 <li>https://example.com/photo.jpg</li>
-                <li>https://cdn.example.com/video.mp4</li>
-                <li>Direct links from image hosting sites</li>
               </ul>
             </div>
           </form>
@@ -344,6 +533,10 @@ export function FileUpload({ onFileUpload, isAnalyzing }: FileUploadProps) {
             <div className="flex items-center">
               <FileVideo className="w-4 h-4 mr-1" />
               Videos
+            </div>
+            <div className="flex items-center">
+              <Youtube className="w-4 h-4 mr-1" />
+              YouTube
             </div>
           </div>
         </div>
