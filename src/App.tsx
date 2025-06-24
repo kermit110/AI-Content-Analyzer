@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useRef } from 'react'
 import { Header } from './components/Header'
 import { FileUpload } from './components/FileUpload'
 import { AnalysisResult } from './components/AnalysisResult'
@@ -14,6 +14,19 @@ function App() {
   const [currentFile, setCurrentFile] = useState<File | null>(null)
   const [history, setHistory] = useState<HistoryItem[]>([])
   const [isDarkMode, setIsDarkMode] = useState(true)
+  
+  // Ref for the results section to enable smooth scrolling
+  const resultsRef = useRef<HTMLDivElement>(null)
+
+  const scrollToResults = () => {
+    if (resultsRef.current) {
+      resultsRef.current.scrollIntoView({ 
+        behavior: 'smooth', 
+        block: 'start',
+        inline: 'nearest'
+      })
+    }
+  }
 
   const handleFileUpload = useCallback(async (files: FileList) => {
     if (files.length === 0) return
@@ -22,6 +35,11 @@ function App() {
     setCurrentFile(file)
     setIsAnalyzing(true)
     setCurrentResult(null)
+
+    // Scroll to results section after a brief delay to allow state updates
+    setTimeout(() => {
+      scrollToResults()
+    }, 100)
 
     try {
       // Simulate analysis delay
@@ -66,7 +84,7 @@ function App() {
                 </svg>
               </div>
               <h1 className="text-4xl md:text-5xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-                AI Content Detector
+                NWS - AI Content Detector
               </h1>
               <p className="text-xl text-gray-600 dark:text-gray-400 max-w-2xl mx-auto">
                 Upload images or videos to analyze what percentage is AI-generated with detailed insights and confidence scores.
@@ -78,19 +96,22 @@ function App() {
               <FileUpload onFileUpload={handleFileUpload} isAnalyzing={isAnalyzing} />
             </div>
 
-            {/* Loading State */}
-            {isAnalyzing && (
-              <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8">
-                <LoadingSpinner />
-              </div>
-            )}
+            {/* Results Section - This is where we scroll to */}
+            <div ref={resultsRef}>
+              {/* Loading State */}
+              {isAnalyzing && (
+                <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8 animate-fade-in">
+                  <LoadingSpinner />
+                </div>
+              )}
 
-            {/* Results Section */}
-            {currentResult && currentFile && !isAnalyzing && (
-              <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8">
-                <AnalysisResult result={currentResult} file={currentFile} />
-              </div>
-            )}
+              {/* Results Section */}
+              {currentResult && currentFile && !isAnalyzing && (
+                <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8 animate-fade-in">
+                  <AnalysisResult result={currentResult} file={currentFile} />
+                </div>
+              )}
+            </div>
 
             {/* History Section */}
             {history.length > 0 && (
@@ -106,5 +127,3 @@ function App() {
     </div>
   )
 }
-
-export default App

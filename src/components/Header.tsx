@@ -14,7 +14,7 @@ export function Header({ isDarkMode, onToggleDarkMode }: HeaderProps) {
           <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
             <ScanSearch className="h-6 w-6 text-blue-600 dark:text-blue-400" />
           </div>
-          <h1 className="text-xl md:text-2xl font-bold">AI Content Detector</h1>
+          <h1 className="text-xl md:text-2xl font-bold">NWS - AI Content Detector</h1>
         </div>
         
         <button
