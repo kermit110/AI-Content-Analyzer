@@ -60,24 +60,100 @@ export function FileUpload({ onFileUpload, isAnalyzing }: FileUploadProps) {
     }
   }
 
-  const generateFilenameFromUrl = (url: string, contentType: string): string => {
-    const extension = getFileExtensionFromUrl(url)
+  const generateFilenameFromUrl = (url: string, extension?: string): string => {
     const timestamp = Date.now()
+    const urlObj = new URL(url)
+    const hostname = urlObj.hostname.replace(/^www\./, '')
     
     if (extension) {
-      return `url-content-${timestamp}.${extension}`
-    }
-    
-    // Fallback based on content type
-    if (contentType.startsWith('image/')) {
-      const imageExt = contentType.split('/')[1] || 'jpg'
-      return `url-image-${timestamp}.${imageExt}`
-    } else if (contentType.startsWith('video/')) {
-      const videoExt = contentType.split('/')[1] || 'mp4'
-      return `url-video-${timestamp}.${videoExt}`
+      return `${hostname}-${timestamp}.${extension}`
     }
     
     return `url-content-${timestamp}`
+  }
+
+  const detectContentTypeFromUrl = (url: string): { type: string; extension: string } | null => {
+    const extension = getFileExtensionFromUrl(url)
+    
+    // Image extensions
+    const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'tiff', 'ico']
+    if (imageExts.includes(extension)) {
+      const mimeType = extension === 'jpg' ? 'image/jpeg' : 
+                     extension === 'svg' ? 'image/svg+xml' : 
+                     `image/${extension}`
+      return { type: mimeType, extension }
+    }
+    
+    // Video extensions
+    const videoExts = ['mp4', 'webm', 'ogg', 'avi', 'mov', 'wmv', 'flv', 'm4v', 'mkv']
+    if (videoExts.includes(extension)) {
+      const mimeType = extension === 'mov' ? 'video/quicktime' : 
+                     extension === 'avi' ? 'video/x-msvideo' : 
+                     `video/${extension}`
+      return { type: mimeType, extension }
+    }
+    
+    return null
+  }
+
+  const fetchWithCorsProxy = async (url: string): Promise<{ blob: Blob; contentType: string }> => {
+    // List of CORS proxy services (free tiers)
+    const corsProxies = [
+      'https://api.allorigins.win/raw?url=',
+      'https://cors-anywhere.herokuapp.com/',
+      'https://thingproxy.freeboard.io/fetch/',
+    ]
+
+    // First, try direct fetch (might work for some URLs)
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        mode: 'cors',
+        headers: {
+          'Accept': 'image/*,video/*',
+        },
+      })
+
+      if (response.ok) {
+        const blob = await response.blob()
+        const contentType = response.headers.get('content-type') || 'application/octet-stream'
+        return { blob, contentType }
+      }
+    } catch (error) {
+      console.log('Direct fetch failed, trying CORS proxies...')
+    }
+
+    // Try CORS proxies
+    for (const proxy of corsProxies) {
+      try {
+        const proxyUrl = proxy + encodeURIComponent(url)
+        const response = await fetch(proxyUrl, {
+          method: 'GET',
+          headers: {
+            'Accept': 'image/*,video/*',
+          },
+        })
+
+        if (response.ok) {
+          const blob = await response.blob()
+          
+          // Try to determine content type from blob or URL
+          let contentType = response.headers.get('content-type') || blob.type
+          
+          if (!contentType || contentType === 'application/octet-stream') {
+            const detected = detectContentTypeFromUrl(url)
+            contentType = detected?.type || 'application/octet-stream'
+          }
+          
+          return { blob, contentType }
+        }
+      } catch (error) {
+        console.log(`Proxy ${proxy} failed:`, error)
+        continue
+      }
+    }
+
+    throw new Error('Unable to fetch content. The URL may not be accessible or may not point to a valid image/video file.')
   }
 
   const handleUrlSubmit = useCallback(async (e: React.FormEvent) => {
@@ -93,35 +169,33 @@ export function FileUpload({ onFileUpload, isAnalyzing }: FileUploadProps) {
         throw new Error('Please enter a valid HTTP or HTTPS URL')
       }
 
-      // Fetch the content
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Accept': 'image/*,video/*',
-        },
-      })
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch content: ${response.status} ${response.statusText}`)
+      // Pre-validate URL extension
+      const detected = detectContentTypeFromUrl(url)
+      if (!detected) {
+        throw new Error('URL must point to an image or video file (jpg, png, gif, webp, mp4, webm, etc.)')
       }
 
-      const contentType = response.headers.get('content-type') || ''
+      // Fetch the content with CORS handling
+      const { blob, contentType } = await fetchWithCorsProxy(url)
       
-      // Check if it's an image or video
+      // Validate content type
       if (!contentType.startsWith('image/') && !contentType.startsWith('video/')) {
-        throw new Error('URL must point to an image or video file')
+        throw new Error('The fetched content is not a valid image or video file')
       }
 
-      const blob = await response.blob()
-      
       // Check file size (limit to 100MB)
       const maxSize = 100 * 1024 * 1024 // 100MB
       if (blob.size > maxSize) {
         throw new Error('File is too large. Maximum size is 100MB')
       }
 
+      // Check minimum file size (avoid empty files)
+      if (blob.size < 100) {
+        throw new Error('File is too small or empty. Please check the URL.')
+      }
+
       // Create a file from the blob
-      const filename = generateFilenameFromUrl(url, contentType)
+      const filename = generateFilenameFromUrl(url, detected.extension)
       const file = new File([blob], filename, { 
         type: contentType,
         lastModified: Date.now()
@@ -136,7 +210,18 @@ export function FileUpload({ onFileUpload, isAnalyzing }: FileUploadProps) {
       setShowUrlInput(false)
     } catch (error) {
       console.error('Failed to fetch URL:', error)
-      setUrlError(error instanceof Error ? error.message : 'Failed to load content from URL')
+      let errorMessage = 'Failed to load content from URL'
+      
+      if (error instanceof Error) {
+        errorMessage = error.message
+      }
+      
+      // Provide helpful suggestions based on common issues
+      if (errorMessage.includes('fetch')) {
+        errorMessage += '. Try using a direct link to the image/video file, or the server may not allow external access.'
+      }
+      
+      setUrlError(errorMessage)
     } finally {
       setIsLoadingUrl(false)
     }
@@ -197,15 +282,22 @@ export function FileUpload({ onFileUpload, isAnalyzing }: FileUploadProps) {
             </div>
             
             {urlError && (
-              <div className="flex items-center space-x-2 text-red-600 dark:text-red-400 text-sm">
-                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <div className="flex items-start space-x-2 text-red-600 dark:text-red-400 text-sm">
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
                 <span>{urlError}</span>
               </div>
             )}
             
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              Enter a direct link to an image or video file. Supported formats: JPG, PNG, GIF, WebP, MP4, WebM, MOV
-            </p>
+            <div className="text-xs text-gray-500 dark:text-gray-400 space-y-1">
+              <p>Enter a direct link to an image or video file.</p>
+              <p><strong>Supported formats:</strong> JPG, PNG, GIF, WebP, MP4, WebM, MOV</p>
+              <p><strong>Examples:</strong></p>
+              <ul className="list-disc list-inside ml-2 space-y-0.5">
+                <li>https://example.com/photo.jpg</li>
+                <li>https://cdn.example.com/video.mp4</li>
+                <li>Direct links from image hosting sites</li>
+              </ul>
+            </div>
           </form>
         </div>
       )}
